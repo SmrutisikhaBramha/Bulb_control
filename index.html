@@ -100,6 +100,18 @@
             font-family: monospace;
             margin: 10px 0;
         }
+        .info {
+            margin-top: 20px;
+            padding: 10px;
+            background: #e3f2fd;
+            border-radius: 10px;
+            font-size: 12px;
+            color: #1976d2;
+        }
+        .note {
+            color: #f57c00;
+            font-weight: bold;
+        }
     </style>
     <!-- MQTT Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.js" type="text/javascript"></script>
@@ -111,10 +123,16 @@
         <!-- Bulb Icon -->
         <div class="bulb-icon bulb-off" id="bulb">💡</div>
         
+        <!-- Broker Info - Fixed for Netlify HTTPS -->
+        <div class="info">
+            <span class="note">🔒 HTTPS Mode Active</span><br>
+            Using Secure WebSocket (WSS) for Netlify
+        </div>
+        
         <!-- Control Buttons -->
         <div class="button-group">
-            <button class="btn-on" onclick="publishMessage('on')">Turn ON</button>
-            <button class="btn-off" onclick="publishMessage('off')">Turn OFF</button>
+            <button class="btn-on" onclick="publishMessage('on')">TURN ON</button>
+            <button class="btn-off" onclick="publishMessage('off')">TURN OFF</button>
         </div>
         
         <!-- Connection Status -->
@@ -122,74 +140,154 @@
             <div id="connectionStatus" class="disconnected">⚫ Disconnected from broker</div>
             <div class="topic">📡 Topic: <span id="topicDisplay">house/bulb</span></div>
             <div id="lastMessage">📭 No messages yet</div>
+            <div id="debug" style="margin-top: 10px; font-size: 12px; color: #666;"></div>
         </div>
         
-        <!-- Settings -->
+        <!-- Fixed Settings for Mosquitto WSS -->
         <div style="margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 10px; text-align: left;">
-            <h3 style="margin-top: 0; color: #333;">⚙️ Settings</h3>
-            <label>Broker: broker.hivemq.com (Port 8000)</label><br>
-            <label>Topic: </label>
-            <input type="text" id="topicInput" value="house/bulb" style="width: 100%; padding: 5px; margin: 5px 0; border: 1px solid #ccc; border-radius: 3px;">
-            <button onclick="updateTopic()" style="width: 100%; padding: 8px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 5px;">Update Topic</button>
+            <h3 style="margin-top: 0; color: #333;">⚙️ Settings (Pre-configured for HTTPS)</h3>
+            
+            <p><strong>Broker:</strong> test.mosquitto.org (WSS Port 8081)</p>
+            <p><strong>This matches your ESP32:</strong> test.mosquitto.org:1883</p>
+            
+            <label>📡 Topic: </label>
+            <input type="text" id="topicInput" value="house/bulb" style="width: 100%; padding: 8px; margin: 5px 0; border: 1px solid #ccc; border-radius: 5px;">
+            
+            <button onclick="updateTopic()" style="width: 100%; padding: 10px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 10px;">Update Topic</button>
+            <button onclick="manualReconnect()" style="width: 100%; padding: 10px; background: #f39c12; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 10px;">🔄 Force Reconnect</button>
+        </div>
+        
+        <!-- Success Note -->
+        <div id="successNote" style="margin-top: 15px; padding: 10px; background: #d4edda; color: #155724; border-radius: 5px; display: none;">
+            ✅ Connected! Your bulb is ready to control.
         </div>
     </div>
 
     <script>
-        // Configuration
-        const broker = "broker.hivemq.com";
-        const port = 8000;  // WebSocket port
-        let clientId = "web-client-" + Math.random().toString(36).substring(2, 10);
-        let client = new Paho.MQTT.Client(broker, Number(port), clientId);
-        let currentTopic = "house/bulb";
+        // =============================================
+        // FIXED FOR NETLIFY HTTPS - Using WSS only
+        // =============================================
+        
+        // Configuration - Hardcoded for Mosquitto WSS (works with HTTPS)
+        const broker = "test.mosquitto.org";
+        const port = 8081;  // WSS port for secure WebSocket
+        const useSSL = true; // Force SSL for HTTPS site
+        
+        let client = null;
         let isConnected = false;
+        let currentTopic = "house/bulb";
+        let reconnectAttempts = 0;
+        let clientId = "web-client-" + Math.random().toString(36).substring(2, 15);
 
-        // Update topic display
+        // Display settings
         document.getElementById('topicDisplay').textContent = currentTopic;
 
-        // Set callback handlers
-        client.onConnectionLost = onConnectionLost;
-        client.onMessageArrived = onMessageArrived;
-
-        // Connect to broker
+        // Initialize connection
         function connect() {
-            client.connect({
-                onSuccess: onConnect,
-                onFailure: onFailure,
-                keepAliveInterval: 20,
-                cleanSession: true
-            });
+            try {
+                document.getElementById('debug').innerHTML = `🔄 Connecting to ${broker}:${port} (WSS)...`;
+                document.getElementById('connectionStatus').innerHTML = '⚫ Connecting...';
+                
+                // Create new client with WSS
+                client = new Paho.MQTT.Client(broker, Number(port), clientId);
+                
+                // Set callbacks
+                client.onConnectionLost = onConnectionLost;
+                client.onMessageArrived = onMessageArrived;
+                
+                // Connection options - Force SSL for HTTPS
+                const connectOptions = {
+                    onSuccess: onConnect,
+                    onFailure: onFailure,
+                    timeout: 30,
+                    keepAliveInterval: 20,
+                    cleanSession: true,
+                    useSSL: true  // Force SSL for WSS
+                };
+                
+                client.connect(connectOptions);
+                
+            } catch (error) {
+                document.getElementById('debug').innerHTML = `❌ Error: ${error.message}`;
+                console.error("Connection error:", error);
+                
+                // Try alternative port if this fails
+                if (port === 8081) {
+                    document.getElementById('debug').innerHTML += `<br>Trying alternative port 8080...`;
+                    setTimeout(tryAlternativePort, 2000);
+                }
+            }
+        }
+
+        // Try alternative port if main fails
+        function tryAlternativePort() {
+            try {
+                const altClient = new Paho.MQTT.Client(broker, Number(8080), clientId + "-alt");
+                altClient.onConnectionLost = onConnectionLost;
+                altClient.onMessageArrived = onMessageArrived;
+                
+                altClient.connect({
+                    onSuccess: function() {
+                        client = altClient;
+                        onConnect();
+                    },
+                    onFailure: function(err) {
+                        document.getElementById('debug').innerHTML = `❌ Both ports failed. Check network.`;
+                        setTimeout(connect, 5000);
+                    },
+                    timeout: 30,
+                    useSSL: false  // Port 8080 is non-SSL
+                });
+            } catch (e) {
+                setTimeout(connect, 5000);
+            }
         }
 
         // Called when connection is successful
         function onConnect() {
             isConnected = true;
+            reconnectAttempts = 0;
             document.getElementById('connectionStatus').innerHTML = '🟢 Connected to broker';
             document.getElementById('connectionStatus').className = 'connected';
-            console.log("Connected to HiveMQ broker");
+            document.getElementById('debug').innerHTML = '✅ Connected successfully!';
+            document.getElementById('successNote').style.display = 'block';
             
             // Subscribe to topic
             client.subscribe(currentTopic);
             console.log("Subscribed to: " + currentTopic);
+            
+            // Hide success note after 3 seconds
+            setTimeout(() => {
+                document.getElementById('successNote').style.display = 'none';
+            }, 3000);
         }
 
         // Called when connection fails
         function onFailure(response) {
             isConnected = false;
-            document.getElementById('connectionStatus').innerHTML = '🔴 Connection failed: ' + response.errorMessage;
+            reconnectAttempts++;
+            document.getElementById('connectionStatus').innerHTML = '🔴 Connection failed';
             document.getElementById('connectionStatus').className = 'disconnected';
-            console.log("Connection failed: " + response.errorMessage);
+            document.getElementById('debug').innerHTML = `❌ Failed (attempt ${reconnectAttempts}): ${response.errorMessage || 'Check if broker is reachable'}`;
             
-            // Try to reconnect after 5 seconds
-            setTimeout(connect, 5000);
+            // Auto-retry with backoff (up to 5 times)
+            if (reconnectAttempts < 5) {
+                const delay = 3000 * reconnectAttempts;
+                document.getElementById('debug').innerHTML += `<br>Retrying in ${delay/1000} seconds...`;
+                setTimeout(connect, delay);
+            } else {
+                document.getElementById('debug').innerHTML += `<br>💡 Tip: Make sure you're connected to the internet`;
+            }
         }
 
         // Called when connection is lost
         function onConnectionLost(response) {
             isConnected = false;
             if (response.errorCode !== 0) {
-                document.getElementById('connectionStatus').innerHTML = '🔴 Connection lost: ' + response.errorMessage;
+                document.getElementById('connectionStatus').innerHTML = '🔴 Connection lost';
                 document.getElementById('connectionStatus').className = 'disconnected';
-                console.log("Connection lost: " + response.errorMessage);
+                document.getElementById('debug').innerHTML = `❌ Lost: ${response.errorMessage}`;
+                document.getElementById('successNote').style.display = 'none';
                 
                 // Try to reconnect
                 setTimeout(connect, 5000);
@@ -199,7 +297,7 @@
         // Called when a message arrives
         function onMessageArrived(message) {
             console.log("Message arrived: " + message.payloadString);
-            document.getElementById('lastMessage').innerHTML = '📨 Last message: ' + message.payloadString + ' at ' + new Date().toLocaleTimeString();
+            document.getElementById('lastMessage').innerHTML = '📨 Received: ' + message.payloadString + ' at ' + new Date().toLocaleTimeString();
             
             // Update bulb icon based on message
             if (message.payloadString === 'on') {
@@ -211,45 +309,66 @@
 
         // Publish a message
         function publishMessage(message) {
-            if (!isConnected) {
-                alert('Not connected to broker! Trying to reconnect...');
+            if (!client || !isConnected) {
+                alert('⚠️ Not connected to broker! Trying to reconnect...');
                 connect();
                 return;
             }
             
-            let mqttMessage = new Paho.MQTT.Message(message);
-            mqttMessage.destinationName = currentTopic;
-            client.send(mqttMessage);
-            console.log("Published: " + message + " to " + currentTopic);
-            
-            // Update bulb icon immediately for better UX
-            if (message === 'on') {
-                document.getElementById('bulb').className = 'bulb-icon bulb-on';
-            } else if (message === 'off') {
-                document.getElementById('bulb').className = 'bulb-icon bulb-off';
+            try {
+                let mqttMessage = new Paho.MQTT.Message(message);
+                mqttMessage.destinationName = currentTopic;
+                client.send(mqttMessage);
+                console.log("Published: " + message + " to " + currentTopic);
+                
+                // Update bulb icon immediately for better UX
+                if (message === 'on') {
+                    document.getElementById('bulb').className = 'bulb-icon bulb-on';
+                } else if (message === 'off') {
+                    document.getElementById('bulb').className = 'bulb-icon bulb-off';
+                }
+                
+                document.getElementById('lastMessage').innerHTML = '📤 Sent: ' + message + ' at ' + new Date().toLocaleTimeString();
+                document.getElementById('debug').innerHTML = '✅ Published: ' + message;
+                
+            } catch (error) {
+                document.getElementById('debug').innerHTML = '❌ Publish error: ' + error.message;
             }
-            
-            document.getElementById('lastMessage').innerHTML = '📤 Sent: ' + message + ' at ' + new Date().toLocaleTimeString();
         }
 
         // Update topic
         function updateTopic() {
             let newTopic = document.getElementById('topicInput').value.trim();
             if (newTopic) {
-                // Unsubscribe from old topic if connected
-                if (isConnected) {
+                if (client && isConnected) {
                     client.unsubscribe(currentTopic);
                     client.subscribe(newTopic);
                 }
                 currentTopic = newTopic;
                 document.getElementById('topicDisplay').textContent = currentTopic;
-                console.log("Topic updated to: " + currentTopic);
+                document.getElementById('debug').innerHTML = '📡 Topic changed to: ' + currentTopic;
             }
         }
 
-        // Start connection when page loads
+        // Manual reconnect
+        function manualReconnect() {
+            reconnectAttempts = 0;
+            if (client) {
+                try {
+                    client.disconnect();
+                } catch (e) {}
+            }
+            document.getElementById('debug').innerHTML = '🔄 Manual reconnect initiated...';
+            setTimeout(connect, 1000);
+        }
+
+        // Test connection on page load
         window.onload = function() {
-            connect();
+            // Show message
+            document.getElementById('debug').innerHTML = '🚀 Starting connection to Mosquitto WSS...';
+            
+            // Start connection
+            setTimeout(connect, 500);
             
             // Add keyboard shortcuts (optional)
             document.addEventListener('keydown', function(e) {
@@ -259,11 +378,15 @@
                     publishMessage('off');
                 }
             });
+            
+            // Update topic when input changes
+            document.getElementById('topicInput').addEventListener('change', updateTopic);
         };
 
         // Reconnect when page becomes visible again
         document.addEventListener('visibilitychange', function() {
             if (!document.hidden && !isConnected) {
+                document.getElementById('debug').innerHTML = '📱 Page visible, reconnecting...';
                 connect();
             }
         });
